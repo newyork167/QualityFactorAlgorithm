@@ -117,6 +117,9 @@ def get_profit(ticker, sub_df, starting_capital):
     output_to_file("Getting profit data for {ticker}".format(ticker=ticker))
     output_to_file("Starting capital: ${starting_capital}".format(starting_capital=starting_capital))
 
+    last_purchase_price = 0
+    last_purchase_date = ''
+
     for i, row in sub_df.iterrows():
         if row['cross']:
             print(i)
@@ -128,6 +131,8 @@ def get_profit(ticker, sub_df, starting_capital):
             share_price = row['Open']
             if cross_color != 'r':
                 shares_owned = int(float(current_capital) / share_price)
+                last_purchase_price = share_price
+                last_purchase_date = row['Date']
                 output_to_file("Buying {shares_owned} shares for ${share_price:.2f} at {sell_date}".format(shares_owned=shares_owned, share_price=share_price, sell_date=row['Date']))
             else:
                 current_capital = shares_owned * share_price
@@ -140,9 +145,10 @@ def get_profit(ticker, sub_df, starting_capital):
     if shares_owned > 0:
         current_capital = shares_owned * share_price
         output_to_file("Closing - Selling {shares_owned} shares for ${share_price:.2f}".format(shares_owned=shares_owned, share_price=share_price))
-        output_to_open_positions_file(ticker)
+        output_to_open_positions_file("OWN - {ticker} @ {last_purchase_price} on {purchase_date}".format(ticker=ticker, last_purchase_price=last_purchase_price, purchase_date=last_purchase_date))
     else:
         output_to_file("Position already closed")
+        output_to_open_positions_file("SOLD - {ticker} @ {last_purchase_price} on {purchase_date}".format(ticker=ticker, last_purchase_price=last_purchase_price, purchase_date=last_purchase_date))
 
     output_to_file("Ending capital: ${ending_capital:.2f}".format(ending_capital=current_capital))
     output_to_file("Net Gain: ${net_gain:.2f}".format(net_gain=(current_capital - starting_capital)))
