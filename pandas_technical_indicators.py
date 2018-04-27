@@ -603,3 +603,35 @@ def ICHIMOKU(ohlc):
     chikou_span = pd.Series(ohlc["Close"].shift(-26).rolling(window=26).mean(), name="Ichimoku Lagging Span")
 
     return pd.concat([ohlc, tenkan_sen, kijun_sen, senkou_span_a, senkou_span_b, chikou_span], axis=1)
+
+def MACD(ohlc, period_fast=12, period_slow=26, signal=9):
+    '''MACD, MACD Signal and MACD difference.
+    The MACD Line oscillates above and below the zero line, which is also known as the centerline.
+    These crossovers signal that the 12-day EMA has crossed the 26-day EMA. The direction, of course, depends on the direction of the moving average cross.
+    Positive MACD indicates that the 12-day EMA is above the 26-day EMA. Positive values increase as the shorter EMA diverges further from the longer EMA.
+    This means upside momentum is increasing. Negative MACD values indicates that the 12-day EMA is below the 26-day EMA.
+    Negative values increase as the shorter EMA diverges further below the longer EMA. This means downside momentum is increasing.
+
+    Signal line crossovers are the most common MACD signals. The signal line is a 9-day EMA of the MACD Line.
+    As a moving average of the indicator, it trails the MACD and makes it easier to spot MACD turns.
+    A bullish crossover occurs when the MACD turns up and crosses above the signal line.
+    A bearish crossover occurs when the MACD turns down and crosses below the signal line.
+    '''
+
+    EMA_fast = pd.Series(ohlc["Close"].ewm(ignore_na=False, min_periods=period_fast-1, span=period_fast).mean(), name="EMA_fast")
+    EMA_slow = pd.Series(ohlc["Close"].ewm(ignore_na=False, min_periods=period_slow-1, span=period_slow).mean(), name="EMA_slow")
+    MACD = pd.Series(EMA_fast - EMA_slow, name="macd")
+    MACD_signal = pd.Series(MACD.ewm(ignore_na=False, span=signal).mean(), name="macd_signal")
+
+    return pd.concat([ohlc, MACD, MACD_signal], axis=1)
+
+
+def AO(ohlc, slow_period=34, fast_period=5):
+    '''Awesome Oscillator is an indicator used to measure market momentum. AO calculates the difference of a 34 Period and 5 Period Simple Moving Averages.
+    The Simple Moving Averages that are used are not calculated using closing price but rather each bar's midpoints.
+    AO is generally used to affirm trends or to anticipate possible reversals. '''
+
+    slow = pd.Series( ((ohlc["High"] + ohlc["Low"]) / 2).rolling(window=slow_period).mean(), name="slow_AO")
+    fast = pd.Series( ((ohlc["High"] + ohlc["Low"]) / 2).rolling(window=fast_period).mean(), name="fast_AO")
+
+    return pd.Series(fast - slow, name="AO")
