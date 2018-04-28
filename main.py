@@ -177,18 +177,21 @@ def get_profit(ticker, sub_df, starting_capital):
 
     for i, row in sub_df.iterrows():
         if row['cross']:
-            print(i)
+
             if skip_first:
                 skip_first = False
                 sub_df.set_value(i, 'cross_color', 'b')
                 cross_color = 'b'
                 continue
+
             share_price = row['Open']
             if cross_color != 'r':
                 shares_owned = int(float(current_capital) / share_price)
+
                 last_purchase_price = share_price
                 last_purchase_date = row['Date']
                 last_purchase_shares_owned = shares_owned
+
                 output_to_file("Buying {shares_owned} shares for ${share_price:.2f} at {sell_date}".format(shares_owned=shares_owned, share_price=share_price, sell_date=row['Date']))
 
                 # Write info to db
@@ -201,6 +204,7 @@ def get_profit(ticker, sub_df, starting_capital):
                 write_stock_action_to_graph_db(ticker=ticker, price=row['Open'], datestamp=row['Date'], action='SOLD', quantity=last_purchase_shares_owned)
 
                 shares_owned = 0
+
             cross_color = 'r' if cross_color != 'r' else 'g'
             sub_df.set_value(i, 'cross_color', cross_color)
 
