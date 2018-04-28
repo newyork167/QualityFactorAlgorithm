@@ -4,15 +4,70 @@ import pandas_technical_indicators as pti
 from datetime import datetime
 import matplotlib.pyplot as plt
 import numpy as np
+import configuration as config
+from py2neo import Graph, Path
 
-output_dir = 'figures'
+# Connect to neo4j instance if available
+graph = Graph(
+    "bolt://{hostname}:{port}".format(
+        hostname=config.get('neo4j', 'hostname'),
+        port=config.get('neo4j', 'port')
+    ),
+    password=config.get('neo4j', 'password')
+)
+
+figure_output_dir = config.get('output_files', 'figure_output_dir')
 last_ao = None
 
-start_date = datetime(2017, 1, 1)
-end_date = datetime(2018, 4, 26)
+start_date = datetime.strptime(config.get('stock_variables', 'start_date'), "%Y-%m-%d").date()
 
-output_file = open('output.txt', 'w+')
-open_positions_file = open('open_positions.txt', 'w+')
+if not config.get('stock_variables', 'end_date'):
+    end_date = datetime.today().date()
+else:
+    end_date = datetime.strptime('24052010', "%d%m%Y").date()
+
+output_file = open(config.get('output_files', 'main_output_file'), 'w+')
+open_positions_file = open(config.get('output_files', 'open_positions_file').format(today_date=datetime.today().date().strftime('%Y-%m-%d')), 'w+')
+
+epoch = datetime.utcfromtimestamp(0)
+
+
+def unix_time_millis(dt):
+    return (dt - epoch).total_seconds() * 1000.0
+
+
+def setup_graph_db():
+    """Run this if you don't have your database setup yet"""
+    # Make tickers unique and add index
+    graph.run("CREATE CONSTRAINT ON (s:Stock) ASSERT s.ticker IS UNIQUE")
+    graph.run("CREATE INDEX ON :Stock(ticker)")
+
+    # Make datetimes unique and add index
+    graph.run("CREATE CONSTRAINT ON (d:Date) ASSERT d.epochstamp IS UNIQUE")
+    graph.run("CREATE INDEX ON :Date(epochstamp)")
+
+    # Make prices unique and add index
+    graph.run("CREATE CONSTRAINT ON (p:Price) ASSERT p.price IS UNIQUE")
+    graph.run("CREATE INDEX ON :Price(price)")
+
+    # Make quantities unique and add index
+    graph.run("CREATE CONSTRAINT ON (q:Quantity) ASSERT q.quantity IS UNIQUE")
+    graph.run("CREATE INDEX ON :Quantity(quantity)")
+
+
+def write_stock_action_to_graph_db(ticker, price, quantity, datestamp, action):
+    date = datestamp.strftime('%Y-%m-%d')
+
+    cypher_query = 'MERGE (s:Stock {{ticker:"{ticker}"}}) ' \
+                   'MERGE (d:Date {{date:"{date}"}}) ' \
+                   'MERGE (p:Price {{price:{price}}}) ' \
+                   'MERGE (q:Quantity {{quantity:{quantity}}}) ' \
+                   'MERGE (s)-[:{action}]->(p)-[:AMOUNT]->(q)-[:ON]->(d) RETURN s, d'.format(ticker=ticker, action=action, date=date, price=price, quantity=quantity)
+
+    stock_exists = graph.data(cypher_query)
+
+    if len(stock_exists) == 0:
+        output_to_file("ERROR: An error occurred inserting to graphdb: {cypher_query}".format(cypher_query=cypher_query))
 
 
 def output_to_file(s):
@@ -63,8 +118,7 @@ def colourize_ao(x):
 
 
 def plot_stock_data(ticker):
-    start_date = datetime(2018, 1, 1)
-    end_date = datetime(2018, 4, 25)
+    global start_date, end_date
 
     print('Getting stock data for {ticker} between {start_date} - {end_date}'.format(ticker=ticker, start_date=start_date, end_date=end_date))
 
@@ -83,7 +137,7 @@ def plot_stock_data(ticker):
                      where=df['Ichimoku Leading Span A'] < df['Ichimoku Leading Span B'],
                      facecolor='red', alpha=0.2, interpolate=True)
     # plt.show()
-    plt.savefig("{output_dir}/{ticker}.png".format(output_dir=output_dir, ticker=ticker))
+    plt.savefig("{output_dir}/{ticker}.png".format(output_dir=figure_output_dir, ticker=ticker))
 
 
 def determine_cross_color(df):
@@ -118,6 +172,7 @@ def get_profit(ticker, sub_df, starting_capital):
     output_to_file("Starting capital: ${starting_capital}".format(starting_capital=starting_capital))
 
     last_purchase_price = 0
+    last_purchase_shares_owned = 0
     last_purchase_date = ''
 
     for i, row in sub_df.iterrows():
@@ -133,10 +188,18 @@ def get_profit(ticker, sub_df, starting_capital):
                 shares_owned = int(float(current_capital) / share_price)
                 last_purchase_price = share_price
                 last_purchase_date = row['Date']
+                last_purchase_shares_owned = shares_owned
                 output_to_file("Buying {shares_owned} shares for ${share_price:.2f} at {sell_date}".format(shares_owned=shares_owned, share_price=share_price, sell_date=row['Date']))
+
+                # Write info to db
+                write_stock_action_to_graph_db(ticker=ticker, price=last_purchase_price, datestamp=last_purchase_date, action='BOUGHT', quantity=last_purchase_shares_owned)
             else:
                 current_capital = shares_owned * share_price
                 output_to_file("Selling {shares_owned} shares for ${share_price:.2f} at {sell_date}".format(shares_owned=shares_owned, share_price=share_price, sell_date=row['Date']))
+
+                # Write info to db
+                write_stock_action_to_graph_db(ticker=ticker, price=row['Open'], datestamp=row['Date'], action='SOLD', quantity=last_purchase_shares_owned)
+
                 shares_owned = 0
             cross_color = 'r' if cross_color != 'r' else 'g'
             sub_df.set_value(i, 'cross_color', cross_color)
@@ -144,11 +207,13 @@ def get_profit(ticker, sub_df, starting_capital):
     # Close out this position
     if shares_owned > 0:
         current_capital = shares_owned * share_price
-        output_to_file("Closing - Selling {shares_owned} shares for ${share_price:.2f}".format(shares_owned=shares_owned, share_price=share_price))
-        output_to_open_positions_file("OWN - {ticker} @ {last_purchase_price} on {purchase_date}".format(ticker=ticker, last_purchase_price=last_purchase_price, purchase_date=last_purchase_date))
+        output_to_file("Closing - Selling {shares_owned} shares for ${share_price:.2f}".format(shares_owned=last_purchase_shares_owned, share_price=last_purchase_price))
+        output_to_open_positions_file(
+            "OWN - {quantity} x {ticker} @ {last_purchase_price} on {purchase_date}".format(quantity=last_purchase_shares_owned, ticker=ticker, last_purchase_price=last_purchase_price, purchase_date=last_purchase_date))
     else:
         output_to_file("Position already closed")
-        output_to_open_positions_file("SOLD - {ticker} @ {last_purchase_price} on {purchase_date}".format(ticker=ticker, last_purchase_price=last_purchase_price, purchase_date=last_purchase_date))
+        output_to_open_positions_file(
+            "SOLD - {quantity} x {ticker} @ {last_purchase_price} on {purchase_date}".format(quantity=last_purchase_shares_owned, ticker=ticker, last_purchase_price=last_purchase_price, purchase_date=last_purchase_date))
 
     output_to_file("Ending capital: ${ending_capital:.2f}".format(ending_capital=current_capital))
     output_to_file("Net Gain: ${net_gain:.2f}".format(net_gain=(current_capital - starting_capital)))
@@ -179,6 +244,7 @@ def get_baseline_profit(total_capital):
 
 def calculate_indicators(df):
     global last_ao
+
     df['Open Rolling Mean'] = df['Open'].rolling(10).mean()
     df['Close Rolling Mean'] = df['Close'].rolling(10).mean()
 
@@ -195,9 +261,10 @@ def calculate_indicators(df):
 
 def main():
     global last_ao, start_date, end_date
+
     tech_sector_stock_tickers = ['CVLT', 'ACIW', 'GOOGL', 'GPN', 'GDDY', 'CTSH', 'CRTO', 'BOX', 'ADSK', 'WIX']
 
-    total_capital = 100000
+    total_capital = config.getint('stock_variables', 'total_capital')
     starting_capital = round(float(total_capital) / len(tech_sector_stock_tickers), 2)
     total_ending_profit = 0
 
