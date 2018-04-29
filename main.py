@@ -28,6 +28,7 @@ else:
 
 output_file = open(config.get('output_files', 'main_output_file'), 'w+')
 open_positions_file = open(config.get('output_files', 'open_positions_file').format(today_date=datetime.today().date().strftime('%Y-%m-%d')), 'w+')
+today_output_file = open(config.get('output_files', 'today_output_file').format(today_date=datetime.today().date().strftime('%Y-%m-%d')), 'w+')
 
 epoch = datetime.utcfromtimestamp(0)
 
@@ -55,6 +56,11 @@ def setup_graph_db():
     graph.run("CREATE INDEX ON :Quantity(quantity)")
 
 
+def reset_stock_db():
+    graph.run("MATCH (s:Stock) DETACH DELETE s")
+    graph.run("START r=relationship(*) DELETE r")
+
+
 def write_stock_action_to_graph_db(ticker, price, quantity, datestamp, action):
     date = datestamp.strftime('%Y-%m-%d')
 
@@ -79,6 +85,11 @@ def output_to_file(s):
 def output_to_open_positions_file(s):
     open_positions_file.write(s.strip() + '\n')
     open_positions_file.flush()
+
+
+def output_to_today_output_file(s):
+    today_output_file.write(s.strip() + '\n')
+    today_output_file.flush()
 
 
 def calculate_delta(df):
@@ -194,11 +205,17 @@ def get_profit(ticker, sub_df, starting_capital):
 
                 output_to_file("Buying {shares_owned} shares for ${share_price:.2f} at {sell_date}".format(shares_owned=shares_owned, share_price=share_price, sell_date=row['Date']))
 
+                if last_purchase_date.date() == datetime.today().date():
+                    output_to_today_output_file("BUY: {shares_count} x {ticker} @ {share_price}".format(shares_count=last_purchase_shares_owned, ticker=ticker, share_price=last_purchase_price))
+
                 # Write info to db
                 write_stock_action_to_graph_db(ticker=ticker, price=last_purchase_price, datestamp=last_purchase_date, action='BOUGHT', quantity=last_purchase_shares_owned)
             else:
                 current_capital = shares_owned * share_price
                 output_to_file("Selling {shares_owned} shares for ${share_price:.2f} at {sell_date}".format(shares_owned=shares_owned, share_price=share_price, sell_date=row['Date']))
+
+                if last_purchase_date.date() == datetime.today().date():
+                    output_to_today_output_file("SELL: {shares_count} x {ticker} @ {share_price}".format(shares_count=last_purchase_shares_owned, ticker=ticker, share_price=last_purchase_price))
 
                 # Write info to db
                 write_stock_action_to_graph_db(ticker=ticker, price=row['Open'], datestamp=row['Date'], action='SOLD', quantity=last_purchase_shares_owned)
@@ -265,6 +282,8 @@ def calculate_indicators(df):
 
 def main():
     global last_ao, start_date, end_date
+
+    reset_stock_db()
 
     tech_sector_stock_tickers = ['CVLT', 'ACIW', 'GOOGL', 'GPN', 'GDDY', 'CTSH', 'CRTO', 'BOX', 'ADSK', 'WIX']
 
