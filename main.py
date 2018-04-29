@@ -95,10 +95,14 @@ def output_to_today_output_file(s):
 def output_to_orders_file(s, date):
     import os
 
-    order_file_path = "positions/orders/{date}_orders.txt".format(date=date.strftime("%Y-%m-%d"))
+    order_file_directory = "positions/orders/"
+    order_file_path = "{order_file_directory}/{date}_orders.txt".format(order_file_directory=order_file_directory, date=date.strftime("%Y-%m-%d"))
+
+    if not os.path.exists(order_file_directory):
+        os.makedirs(order_file_directory)
 
     if os.path.exists(order_file_path):
-        with open(order_file_path, 'w') as order_file:
+        with open(order_file_path, 'a') as order_file:
             order_file.write(s.strip() + '\n')
     else:
         with open(order_file_path, 'w+') as order_file:
@@ -230,11 +234,11 @@ def get_profit(ticker, sub_df, starting_capital):
                 current_capital = shares_owned * share_price
                 output_to_file("Selling {shares_owned} shares for ${share_price:.2f} at {sell_date}".format(shares_owned=shares_owned, share_price=share_price, sell_date=row['Date']))
 
-                if last_purchase_date.date() == datetime.today().date():
-                    output_to_today_output_file("SELL: {shares_count} x {ticker} @ {share_price}".format(shares_count=last_purchase_shares_owned, ticker=ticker, share_price=last_purchase_price))
+                if row['Date'].date() == datetime.today().date():
+                    output_to_today_output_file("SELL: {shares_count} x {ticker} @ {share_price}".format(shares_count=shares_owned, ticker=ticker, share_price=share_price))
 
                 elif config.getboolean('output_files', 'build_past_orders'):
-                    output_to_orders_file("SELL: {shares_count} x {ticker} @ {share_price}".format(shares_count=last_purchase_shares_owned, ticker=ticker, share_price=last_purchase_price), last_purchase_date)
+                    output_to_orders_file("SELL: {shares_count} x {ticker} @ {share_price}".format(shares_count=shares_owned, ticker=ticker, share_price=share_price), row['Date'])
 
                 # Write info to db
                 write_stock_action_to_graph_db(ticker=ticker, price=row['Open'], datestamp=row['Date'], action='SOLD', quantity=last_purchase_shares_owned)
